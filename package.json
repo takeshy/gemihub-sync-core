@@ -1,6 +1,6 @@
 {
   "name": "gemihub-sync-core",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Shared sync protocol core for GemiHub clients — _sync-meta.json diffing, conflict detection and Drive helpers for the web app, Obsidian and Desktop plugins.",
   "license": "MIT",
   "author": "Takeshi Morita",
@@ -21,6 +21,15 @@
       ],
       "conflict": [
         "./dist/conflict/index.d.ts"
+      ],
+      "crypto": [
+        "./dist/crypto/index.d.ts"
+      ],
+      "auth": [
+        "./dist/auth/index.d.ts"
+      ],
+      "hash": [
+        "./dist/hash/index.d.ts"
       ]
     }
   },
@@ -44,6 +53,18 @@
     "./conflict": {
       "types": "./dist/conflict/index.d.ts",
       "default": "./dist/conflict/index.js"
+    },
+    "./crypto": {
+      "types": "./dist/crypto/index.d.ts",
+      "default": "./dist/crypto/index.js"
+    },
+    "./auth": {
+      "types": "./dist/auth/index.d.ts",
+      "default": "./dist/auth/index.js"
+    },
+    "./hash": {
+      "types": "./dist/hash/index.d.ts",
+      "default": "./dist/hash/index.js"
     }
   },
   "files": [

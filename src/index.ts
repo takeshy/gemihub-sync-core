@@ -2,3 +2,6 @@ export * from "./protocol/index.ts";
 export * from "./paths/index.ts";
 export * from "./files/index.ts";
 export * from "./conflict/index.ts";
+export * from "./crypto/index.ts";
+export * from "./auth/index.ts";
+export * from "./hash/index.ts";

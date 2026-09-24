@@ -2,7 +2,7 @@
 
 Shared sync protocol core for GemiHub clients: `_sync-meta.json` diffing, conflict detection and Drive helpers for the web app, Obsidian and Desktop plugins.
 
-GemiHub stores a workspace **flat** in one Google Drive folder. A file's Drive name is its relative path, and `_sync-meta.json` in the same folder is the fileId → metadata registry. Every client that syncs this layout (GemiHub web, [obsidian-gemihub](https://github.com/takeshy/obsidian-gemihub), gemihub-gdrive) must agree on the same rules. This package holds those rules as pure, runtime-agnostic TypeScript. It does no I/O and has no runtime dependencies.
+GemiHub stores a workspace **flat** in one Google Drive folder. A file's Drive name is its relative path, and `_sync-meta.json` in the same folder is the fileId → metadata registry. Every client that syncs this layout (GemiHub web, [obsidian-gemihub](https://github.com/takeshy/obsidian-gemihub), gemihub-gdrive) must agree on the same rules. This package holds those rules as pure, runtime-agnostic TypeScript. It does no I/O and has no runtime dependencies. Cryptography uses the standard Web Crypto API (`globalThis.crypto`), available in browsers, Node and Deno.
 
 ## Contents
 
@@ -12,6 +12,9 @@ GemiHub stores a workspace **flat** in one Google Drive folder. A file's Drive n
 | `gemihub-sync-core/paths` | Sync exclusion: system files and folders, excluded folder names, user glob patterns (`isUserExcludedPath`), and `isSyncExcludedPath(path, options)` with client-specific prefixes and segments |
 | `gemihub-sync-core/files` | One text/binary/MIME table for every client: `shouldTreatAsBinaryFile`, `guessMimeType`, `isTextFileName`, `isBinaryMimeType`, `looksLikeBinary`, large-file threshold |
 | `gemihub-sync-core/conflict` | Conflict backup names: `buildConflictBackupName` (reversible, millisecond timestamp) and `parseConflictBackupName` (also reads every legacy format) |
+| `gemihub-sync-core/crypto` | Hybrid encryption (RSA-OAEP + AES-GCM, PBKDF2-protected private key) and the encrypted file envelope with searchable `description` / `publicMetadata`. Web Crypto only. `test/fixtures/gemihub-crypto.json` pins the on-disk format |
+| `gemihub-sync-core/auth` | External sync credentials: Migration Tool token (`encodeMigrationToken` / `decodeMigrationToken`), `_encrypted-auth.json` (`buildEncryptedAuthFile` / `parseEncryptedAuthFile` / `decryptEncryptedAuth`), and the token refresh request/response (`buildTokenRefreshRequest` / `parseTokenRefreshResponse` / `needsTokenRefresh`) |
+| `gemihub-sync-core/hash` | Pure-JS MD5 (`md5Hash`, `md5HashString`) for comparing content with Drive's `md5Checksum` |
 | `gemihub-sync-core` | Everything above |
 
 Drive API access, credentials and local storage stay in each client. The reconciliation helpers take Drive listings as plain objects (`DriveFileLike`), so any transport works: `fetch`, Obsidian `requestUrl`, or a desktop plugin network API.
