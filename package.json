@@ -1,0 +1,44 @@
+{
+  "name": "gemihub-sync-core",
+  "version": "0.1.0",
+  "description": "Shared sync protocol core for GemiHub clients — _sync-meta.json diffing, conflict detection and Drive helpers for the web app, Obsidian and Desktop plugins.",
+  "license": "MIT",
+  "author": "Takeshi Morita",
+  "type": "module",
+  "sideEffects": false,
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./protocol": {
+      "types": "./dist/protocol/index.d.ts",
+      "default": "./dist/protocol/index.js"
+    },
+    "./paths": {
+      "types": "./dist/paths/index.d.ts",
+      "default": "./dist/paths/index.js"
+    }
+  },
+  "files": [
+    "LICENSE",
+    "README.md",
+    "dist"
+  ],
+  "engines": {
+    "node": ">=22.18"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.test.json",
+    "test": "node --test \"test/**/*.test.ts\"",
+    "prepare": "npm run build",
+    "prepack": "npm run build && npm test"
+  },
+  "devDependencies": {
+    "@types/node": "^24.13.6",
+    "typescript": "^5.9.3"
+  }
+}
