@@ -6,3 +6,4 @@ export * from "./crypto/index.ts";
 export * from "./auth/index.ts";
 export * from "./hash/index.ts";
 export * from "./drive/index.ts";
+export * from "./sync-meta/index.ts";
