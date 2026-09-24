@@ -15,9 +15,10 @@ GemiHub stores a workspace **flat** in one Google Drive folder. A file's Drive n
 | `gemihub-sync-core/crypto` | Hybrid encryption (RSA-OAEP + AES-GCM, PBKDF2-protected private key) and the encrypted file envelope with searchable `description` / `publicMetadata`. Web Crypto only. `test/fixtures/gemihub-crypto.json` pins the on-disk format |
 | `gemihub-sync-core/auth` | External sync credentials: Migration Tool token (`encodeMigrationToken` / `decodeMigrationToken`), `_encrypted-auth.json` (`buildEncryptedAuthFile` / `parseEncryptedAuthFile` / `decryptEncryptedAuth`), and the token refresh request/response (`buildTokenRefreshRequest` / `parseTokenRefreshResponse` / `needsTokenRefresh`) |
 | `gemihub-sync-core/hash` | Pure-JS MD5 (`md5Hash`, `md5HashString`) for comparing content with Drive's `md5Checksum` |
+| `gemihub-sync-core/drive` | Drive v3 REST client over an injected transport (`createDriveClient`, `fetchTransport`, `headersFromRecord`): folders, paginated listing, text/binary read, multipart create, media update, rename/move/copy/delete, exact-name lookup; shared retry policy (429/500/503, capped Retry-After) and `DriveApiError` |
 | `gemihub-sync-core` | Everything above |
 
-Drive API access, credentials and local storage stay in each client. The reconciliation helpers take Drive listings as plain objects (`DriveFileLike`), so any transport works: `fetch`, Obsidian `requestUrl`, or a desktop plugin network API.
+Credentials, local storage and the HTTP transport stay in each client. The reconciliation helpers take Drive listings as plain objects (`DriveFileLike`), so any transport works: `fetch`, Obsidian `requestUrl`, or a desktop plugin network API.
 
 ## Install
 
