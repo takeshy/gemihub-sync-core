@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { isGoogleWorkspaceMimeType, isSyncExcludedPath, shouldTreatAsBinaryFile } from "../src/paths/index.ts";
+import { isGoogleWorkspaceMimeType, isSyncExcludedPath, isUserExcludedPath } from "../src/paths/index.ts";
 
 test("isSyncExcludedPath excludes system file names", () => {
   assert.equal(isSyncExcludedPath("_sync-meta.json"), true);
@@ -39,20 +39,47 @@ test("isSyncExcludedPath allows normal files", () => {
   assert.equal(isSyncExcludedPath("history_notes.md"), false);
 });
 
-test("shouldTreatAsBinaryFile keeps dashboard-like text files textual despite octet-stream mime", () => {
-  assert.equal(shouldTreatAsBinaryFile("Dashboards/home.dashboard", "application/octet-stream"), false);
-  assert.equal(shouldTreatAsBinaryFile("Dashboards/Bases/Tips.base", "application/octet-stream"), false);
-  assert.equal(shouldTreatAsBinaryFile("workflows/example.yaml", "application/octet-stream"), false);
-});
-
-test("shouldTreatAsBinaryFile still treats real binary extensions as binary", () => {
-  assert.equal(shouldTreatAsBinaryFile("archive.zip", "application/octet-stream"), true);
-  assert.equal(shouldTreatAsBinaryFile("cover.png", ""), true);
-});
-
 test("isGoogleWorkspaceMimeType distinguishes native files from exported files", () => {
   assert.equal(isGoogleWorkspaceMimeType("application/vnd.google-apps.document"), true);
   assert.equal(isGoogleWorkspaceMimeType("application/vnd.google-apps.spreadsheet"), true);
   assert.equal(isGoogleWorkspaceMimeType("application/vnd.openxmlformats-officedocument.wordprocessingml.document"), false);
   assert.equal(isGoogleWorkspaceMimeType("application/pdf"), false);
+});
+
+test("isSyncExcludedPath excludes GemiHub/Obsidian conflict backups and tooling folders", () => {
+  assert.equal(isSyncExcludedPath("GemiHub/conflict-backups/a_20260101_000000_000.md"), true);
+  assert.equal(isSyncExcludedPath("project/node_modules/pkg/index.js"), true);
+  assert.equal(isSyncExcludedPath(".git/config"), true);
+  assert.equal(isSyncExcludedPath("docs/node_modules.md"), false);
+});
+
+test("isSyncExcludedPath matches a system folder itself", () => {
+  assert.equal(isSyncExcludedPath("trash"), true);
+  assert.equal(isSyncExcludedPath("trashcan.md"), false);
+});
+
+test("isSyncExcludedPath strips managed roots only when asked", () => {
+  assert.equal(isSyncExcludedPath("gemihub/history/run.log"), false);
+  assert.equal(isSyncExcludedPath("gemihub/history/run.log", { managedRootPrefixes: ["gemihub/"] }), true);
+});
+
+test("isSyncExcludedPath applies client prefixes, segments and user patterns", () => {
+  const options = {
+    extraPrefixes: [".obsidian/", "GemiHub/"],
+    extraSegments: [".llm-hub"],
+    excludePatterns: ["private/", "*.tmp"],
+  };
+  assert.equal(isSyncExcludedPath(".obsidian/app.json", options), true);
+  assert.equal(isSyncExcludedPath("GemiHub", options), true);
+  assert.equal(isSyncExcludedPath("work/.llm-hub/state.json", options), true);
+  assert.equal(isSyncExcludedPath("private/diary.md", options), true);
+  assert.equal(isSyncExcludedPath("notes/scratch.tmp", options), true);
+  assert.equal(isSyncExcludedPath("notes/plan.md", options), false);
+});
+
+test("isUserExcludedPath matches folder patterns and basename globs", () => {
+  assert.equal(isUserExcludedPath("drafts", ["drafts/"]), true);
+  assert.equal(isUserExcludedPath("drafts/a.md", ["drafts/"]), true);
+  assert.equal(isUserExcludedPath("a/b/draft-1.md", ["draft-?.md"]), true);
+  assert.equal(isUserExcludedPath("a/b/final.md", ["draft-*"]), false);
 });

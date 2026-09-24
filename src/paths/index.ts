@@ -1,163 +1,95 @@
+// Which paths take part in sync. The system rules are identical for every
+// client; clients add their own folders (Obsidian config dir, Desktop
+// workspace metadata) through the options.
+
 import { SYNC_META_FILE_NAME, SETTINGS_FILE_NAME, ENCRYPTED_AUTH_FILE_NAME } from "../protocol/sync-meta.ts";
 
 export const SYNC_EXCLUDED_FILE_NAMES = new Set([SYNC_META_FILE_NAME, SETTINGS_FILE_NAME, ENCRYPTED_AUTH_FILE_NAME]);
+
+/** GemiHub system folders at the root of the sync folder. */
 export const SYNC_EXCLUDED_PREFIXES = [
   "history/",
   "trash/",
   "sync_conflicts/",
   "__TEMP__/",
   "plugins/",
+  "GemiHub/conflict-backups/",
 ];
+
+/** Folder names excluded at any depth (tooling output, never user content). */
+export const SYNC_EXCLUDED_PATH_SEGMENTS = [".git", "node_modules"];
 
 export function isGoogleWorkspaceMimeType(mimeType: string | undefined | null): boolean {
   return Boolean(mimeType?.startsWith("application/vnd.google-apps."));
 }
 
-// GCS project paths carry the managed root as a literal prefix
-// ("gemihub/history/…"), while Drive paths are relative to the gemihub root
-// folder and never include it. Strip it so both identities share one rule.
-const SYNC_MANAGED_ROOT_PREFIXES = ["gemihub/"];
+function normalizePath(path: string): string {
+  return path.replace(/\\/g, "/").replace(/^\/+/, "");
+}
 
+/** A prefix ending in "/" also matches the folder itself ("trash/" ↔ "trash"). */
+function matchesPrefix(path: string, prefix: string): boolean {
+  if (path.startsWith(prefix)) return true;
+  return prefix.endsWith("/") && path === prefix.slice(0, -1);
+}
+
+/** GemiHub system files and folders (no client-specific rules). */
 export function isProjectInternalPath(fileName: string): boolean {
-  const normalized = fileName.replace(/^\/+/, "");
+  const normalized = normalizePath(fileName);
   if (SYNC_EXCLUDED_FILE_NAMES.has(normalized)) return true;
-  return SYNC_EXCLUDED_PREFIXES.some((prefix) => normalized.startsWith(prefix));
-}
-
-export function isSyncExcludedPath(fileName: string): boolean {
-  const normalized = fileName.replace(/^\/+/, "");
-  const candidates = [normalized];
-  for (const prefix of SYNC_MANAGED_ROOT_PREFIXES) {
-    if (normalized.startsWith(prefix)) {
-      candidates.push(normalized.slice(prefix.length));
-    }
-  }
-  return candidates.some(isProjectInternalPath);
-}
-
-const BINARY_APPLICATION_TYPES = new Set([
-  "application/pdf",
-  "application/epub+zip",
-  "application/zip",
-  "application/gzip",
-  "application/x-tar",
-  "application/x-gzip",
-  "application/x-bzip2",
-  "application/x-7z-compressed",
-  "application/x-rar-compressed",
-  "application/octet-stream",
-  "application/wasm",
-]);
-
-const BINARY_APPLICATION_PREFIXES = [
-  "application/vnd.openxmlformats-",  // docx, xlsx, pptx
-  "application/vnd.ms-",              // doc, xls, ppt
-  "application/vnd.oasis.opendocument.", // odt, ods, odp
-];
-
-const BINARY_FILE_EXTENSIONS = new Set([
-  "epub",
-  "doc",
-  "docx",
-  "xls",
-  "xlsx",
-  "ppt",
-  "pptx",
-  "odt",
-  "ods",
-  "odp",
-  "zip",
-  "gz",
-  "tar",
-  "bz2",
-  "7z",
-  "rar",
-  "wasm",
-]);
-
-const TEXT_FILE_EXTENSIONS = new Set([
-  "base",
-  "kanban",
-  "css",
-  "csv",
-  "dashboard",
-  "html",
-  "js",
-  "json",
-  "jsx",
-  "md",
-  "mjs",
-  "ts",
-  "tsx",
-  "txt",
-  "xml",
-  "yaml",
-  "yml",
-]);
-
-export function isBinaryMimeType(mimeType: string | undefined | null): boolean {
-  if (!mimeType) return false;
-  if (
-    mimeType.startsWith("image/") ||
-    mimeType.startsWith("video/") ||
-    mimeType.startsWith("audio/") ||
-    mimeType.startsWith("font/")
-  ) return true;
-  if (BINARY_APPLICATION_TYPES.has(mimeType)) return true;
-  return BINARY_APPLICATION_PREFIXES.some((p) => mimeType.startsWith(p));
-}
-
-export function isBinaryFileName(fileName: string | undefined | null): boolean {
-  const ext = fileName?.toLowerCase().split(".").pop() ?? "";
-  return BINARY_FILE_EXTENSIONS.has(ext);
-}
-
-export function isTextFileName(fileName: string | undefined | null): boolean {
-  const ext = fileName?.toLowerCase().split(".").pop() ?? "";
-  return TEXT_FILE_EXTENSIONS.has(ext);
-}
-
-export function shouldTreatAsBinaryFile(
-  fileName: string | undefined | null,
-  mimeType: string | undefined | null
-): boolean {
-  if (isBinaryMimeType(mimeType)) return !isTextFileName(fileName);
-  return isBinaryFileName(fileName) || (fileName ? isImageFileName(fileName) : false);
+  return SYNC_EXCLUDED_PREFIXES.some((prefix) => matchesPrefix(normalized, prefix));
 }
 
 /**
- * Heuristic: check if content looks like binary data.
- * Inspects the first 512 characters for non-printable characters
- * (excluding \t, \n, \r). If >= 10% are control chars, treat as binary.
+ * A user exclude pattern: a trailing `/` excludes a folder and everything
+ * under it; otherwise the pattern is a glob (`*` any characters, `?` one
+ * character) matched against the full path or its basename.
  */
-export function looksLikeBinary(content: string): boolean {
-  const sample = content.slice(0, 512);
-  if (sample.length === 0) return false;
-  let controlCount = 0;
-  for (let i = 0; i < sample.length; i++) {
-    const code = sample.charCodeAt(i);
-    // Allow tab (9), newline (10), carriage return (13)
-    if (code < 32 && code !== 9 && code !== 10 && code !== 13) {
-      controlCount++;
-    }
+export function matchesExcludePattern(path: string, pattern: string): boolean {
+  const trimmed = pattern.trim();
+  if (!trimmed) return false;
+  const normalized = normalizePath(path);
+  if (trimmed.endsWith("/")) return matchesPrefix(normalized, trimmed);
+  const escaped = trimmed
+    .replace(/[.+^${}()|[\]\\]/g, "\\$&")
+    .replace(/\*/g, ".*")
+    .replace(/\?/g, ".");
+  const regex = new RegExp(`^${escaped}$`);
+  return regex.test(normalized) || regex.test(normalized.split("/").pop() ?? "");
+}
+
+export function isUserExcludedPath(path: string, patterns: readonly string[] = []): boolean {
+  return patterns.some((pattern) => matchesExcludePattern(path, pattern));
+}
+
+export interface SyncExclusionOptions {
+  /** User-defined exclude patterns (see matchesExcludePattern). */
+  excludePatterns?: readonly string[];
+  /** Additional root-relative folders/prefixes, e.g. Obsidian's config dir + "/". */
+  extraPrefixes?: readonly string[];
+  /** Additional folder names excluded at any depth. */
+  extraSegments?: readonly string[];
+  /**
+   * Literal roots stripped before matching the system rules. GemiHub's project
+   * storage keys carry "gemihub/" in front of history/, trash/, ...; Drive
+   * paths never do, so Drive-only clients leave this empty.
+   */
+  managedRootPrefixes?: readonly string[];
+}
+
+/** Whether a path is kept out of sync entirely (never pushed, pulled or listed). */
+export function isSyncExcludedPath(fileName: string, options: SyncExclusionOptions = {}): boolean {
+  const normalized = normalizePath(fileName);
+  if (!normalized) return true;
+
+  const candidates = [normalized];
+  for (const root of options.managedRootPrefixes ?? []) {
+    if (normalized.startsWith(root)) candidates.push(normalized.slice(root.length));
   }
-  return controlCount / sample.length >= 0.1;
-}
+  if (candidates.some(isProjectInternalPath)) return true;
 
-/** Files larger than this threshold are not cached in IndexedDB (20 MB). */
-export const LARGE_FILE_CACHE_THRESHOLD = 20 * 1024 * 1024;
-
-/** Returns true if the file exceeds the cache size threshold. */
-export function isLargeFile(size: string | undefined | null): boolean {
-  if (!size) return false;
-  const bytes = Number(size);
-  return !Number.isNaN(bytes) && bytes > LARGE_FILE_CACHE_THRESHOLD;
-}
-
-const IMAGE_EXTENSIONS = new Set(["png", "jpg", "jpeg", "gif", "webp", "svg", "bmp", "ico"]);
-
-/** Check if a file name has an image extension (for thumbnail display). */
-export function isImageFileName(name: string): boolean {
-  const ext = name.toLowerCase().split(".").pop() || "";
-  return IMAGE_EXTENSIONS.has(ext);
+  const segments = new Set([...SYNC_EXCLUDED_PATH_SEGMENTS, ...(options.extraSegments ?? [])]);
+  if (normalized.split("/").slice(0, -1).some((part) => segments.has(part))) return true;
+  if ((options.extraPrefixes ?? []).some((prefix) => matchesPrefix(normalized, prefix))) return true;
+  return isUserExcludedPath(normalized, options.excludePatterns);
 }

@@ -1,6 +1,6 @@
 {
   "name": "gemihub-sync-core",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Shared sync protocol core for GemiHub clients — _sync-meta.json diffing, conflict detection and Drive helpers for the web app, Obsidian and Desktop plugins.",
   "license": "MIT",
   "author": "Takeshi Morita",
@@ -8,6 +8,22 @@
   "sideEffects": false,
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
+  "typesVersions": {
+    "*": {
+      "protocol": [
+        "./dist/protocol/index.d.ts"
+      ],
+      "paths": [
+        "./dist/paths/index.d.ts"
+      ],
+      "files": [
+        "./dist/files/index.d.ts"
+      ],
+      "conflict": [
+        "./dist/conflict/index.d.ts"
+      ]
+    }
+  },
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
@@ -20,6 +36,14 @@
     "./paths": {
       "types": "./dist/paths/index.d.ts",
       "default": "./dist/paths/index.js"
+    },
+    "./files": {
+      "types": "./dist/files/index.d.ts",
+      "default": "./dist/files/index.js"
+    },
+    "./conflict": {
+      "types": "./dist/conflict/index.d.ts",
+      "default": "./dist/conflict/index.js"
     }
   },
   "files": [
@@ -35,7 +59,8 @@
     "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.test.json",
     "test": "node --test \"test/**/*.test.ts\"",
     "prepare": "npm run build",
-    "prepack": "npm run build && npm test"
+    "prepack": "npm run build && npm test",
+    "sync-plugins": "node scripts/sync-plugins.mjs"
   },
   "devDependencies": {
     "@types/node": "^24.13.6",
