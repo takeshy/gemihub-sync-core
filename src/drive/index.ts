@@ -4,7 +4,7 @@
 // building, pagination, multipart bodies, retries and errors are identical
 // everywhere.
 
-import { SYNC_EXCLUDED_FILE_NAMES, isGoogleWorkspaceMimeType } from "../paths/index.ts";
+import { isGoogleWorkspaceMimeType, isSyncExcludedPath } from "../paths/index.ts";
 
 export const DRIVE_API = "https://www.googleapis.com/drive/v3";
 export const DRIVE_UPLOAD_API = "https://www.googleapis.com/upload/drive/v3";
@@ -175,6 +175,11 @@ export function createDriveClient<R extends DriveHttpResponse>(transport: DriveT
 
   /** Authorized request with retry; throws DriveApiError on a non-2xx status. */
   async function request(url: string, accessToken: string, init: DriveRequestInit = {}): Promise<R> {
+    const method = (init.method ?? "GET").toUpperCase();
+    // A POST (create/copy) may have succeeded even when Drive answers 500/503,
+    // so repeating it can produce a second file. 429 is a rate-limit rejection
+    // of a request that was not processed, which is safe to repeat.
+    const canRetry = (status: number) => method !== "POST" || status === 429;
     for (let attempt = 0; ; attempt++) {
       const response = await transport({
         url,
@@ -183,12 +188,14 @@ export function createDriveClient<R extends DriveHttpResponse>(transport: DriveT
         body: init.body,
         signal: init.signal,
       });
-      if (retryStatuses.has(response.status) && attempt < retries) {
+      if (canRetry(response.status) && retryStatuses.has(response.status) && attempt < retries) {
         const retryAfter = Number.parseInt(response.headers.get("retry-after") ?? "", 10);
         const delay = Math.min(maxRetryDelayMs, (Number.isFinite(retryAfter) && retryAfter > 0 ? retryAfter : 2) * 1000);
         await sleep(delay, init.signal);
         continue;
       }
+      // A retried DELETE that now finds nothing was completed by an earlier attempt.
+      if (method === "DELETE" && attempt > 0 && response.status === 404) return response;
       if (response.status < 200 || response.status >= 300) {
         let text = "";
         try {
@@ -291,7 +298,7 @@ export function createDriveClient<R extends DriveHttpResponse>(transport: DriveT
     return (await listFiles(accessToken, rootFolderId, undefined, options)).filter((file) =>
       file.mimeType !== DRIVE_FOLDER_MIME_TYPE
       && !isGoogleWorkspaceMimeType(file.mimeType)
-      && !SYNC_EXCLUDED_FILE_NAMES.has(file.name));
+      && !isSyncExcludedPath(file.name));
   }
 
   function listFolders(accessToken: string, parentId: string, options: DriveOperationOptions = {}): Promise<DriveFile[]> {
@@ -310,12 +317,7 @@ export function createDriveClient<R extends DriveHttpResponse>(transport: DriveT
   async function findFilesByExactName(accessToken: string, name: string, parentId?: string, options: DriveOperationOptions = {}): Promise<DriveFile[]> {
     let query = `name='${escapeDriveQuery(name)}' and mimeType!='${DRIVE_FOLDER_MIME_TYPE}' and trashed=false`;
     if (parentId) query += ` and '${parentId}' in parents`;
-    const data = await requestJson<DriveListResponse>(
-      `${DRIVE_API}/files?q=${encodeURIComponent(query)}&fields=files(id,name,mimeType,modifiedTime,md5Checksum)&pageSize=100`,
-      accessToken,
-      { signal: options.signal },
-    );
-    return data.files ?? [];
+    return listQuery(accessToken, query, "id,name,mimeType,modifiedTime,md5Checksum", { pageSize: "100" }, options);
   }
 
   async function findFileByExactName(accessToken: string, name: string, parentId?: string, options: DriveOperationOptions = {}): Promise<DriveFile | null> {

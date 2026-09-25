@@ -72,6 +72,80 @@ test("read consolidates duplicate _sync-meta.json files into the newest", async 
   assert.deepEqual(Object.keys(JSON.parse(files.get("m2")!.content!).files).sort(), ["a", "b"]);
 });
 
+test("read failure leaves duplicate registries untouched", async () => {
+  const newer: SyncMeta = { lastUpdatedAt: "2", files: { b: entry("b.md", "h2") } };
+  const older: SyncMeta = { lastUpdatedAt: "1", files: { a: entry("a.md", "h1") } };
+  const { drive, files, calls } = fakeDrive([metaFile("m1", older, "2026-01-01"), metaFile("m2", newer, "2026-02-01")]);
+  const originalRead = drive.readFile;
+  drive.readFile = async (token, id, options) => {
+    if (id === "m1") throw new DriveApiError(503, "temporarily unavailable");
+    return originalRead(token, id, options);
+  };
+  await assert.rejects(createSyncMetaStore(drive).read("tok", "root"),
+    (error: unknown) => error instanceof DriveApiError && error.status === 503);
+  assert.equal(files.has("m1"), true);
+  assert.equal(files.has("m2"), true);
+  assert.equal(calls.some((call) => call.startsWith("delete:") || call.startsWith("update:")), false);
+});
+
+test("read failure does not rebuild over the only registry", async () => {
+  const meta: SyncMeta = { lastUpdatedAt: "1", files: { a: entry("a.md", "h1") } };
+  const { drive, files, calls } = fakeDrive([metaFile("m", meta, "2026-01-01")]);
+  drive.readFile = async () => { throw new DriveApiError(503, "temporarily unavailable"); };
+  await assert.rejects(createSyncMetaStore(drive).readReconciled("tok", "root"),
+    (error: unknown) => error instanceof DriveApiError && error.status === 503);
+  assert.deepEqual(JSON.parse(files.get("m")!.content!), meta);
+  assert.equal(calls.some((call) => call.startsWith("update:") || call.startsWith("create:")), false);
+});
+
+test("readReconciled leaves previously tracked excluded paths alone", async () => {
+  // Removing the entry would make every client treat the (still existing) file
+  // as deleted remotely; the listing already keeps excluded files from being adopted.
+  const meta: SyncMeta = { lastUpdatedAt: "1", files: { hidden: entry("history/a.md", "h") } };
+  const { drive, calls } = fakeDrive([
+    metaFile("m", meta, "2026-01-01"),
+    { id: "hidden", name: "history/a.md", mimeType: "text/markdown", md5Checksum: "changed" },
+    { id: "internal", name: "project/node_modules/x.js", mimeType: "text/javascript" },
+  ]);
+  drive.listUserFiles = async () => [];
+  const result = await createSyncMetaStore(drive).readReconciled("tok", "root");
+  assert.deepEqual([result.removedIds, result.refreshedIds, result.addedIds], [[], [], []]);
+  assert.deepEqual(result.meta!.files, meta.files);
+  assert.equal(calls.some((call) => call.startsWith("update:")), false);
+});
+
+test("a malformed duplicate is dropped instead of blocking every read and write", async () => {
+  const good: SyncMeta = { lastUpdatedAt: "2", files: { a: entry("a.md", "h1") } };
+  const { drive, files } = fakeDrive([
+    metaFile("good", good, "2026-02-01"),
+    { id: "broken", name: "_sync-meta.json", mimeType: "application/json", modifiedTime: "2026-01-01", content: "{ truncated" },
+    { id: "wrongShape", name: "_sync-meta.json", mimeType: "application/json", modifiedTime: "2026-01-02", content: "null" },
+    { id: "brokenEntry", name: "_sync-meta.json", mimeType: "application/json", modifiedTime: "2026-01-03", content: '{"lastUpdatedAt":"3","files":{"a":null}}' },
+  ]);
+  const store = createSyncMetaStore(drive);
+  const { meta, fileId } = await store.readWithFile("tok", "root");
+  assert.equal(fileId, "good");
+  assert.deepEqual(Object.keys(meta!.files), ["a"]);
+  assert.equal(files.has("broken"), false);
+  assert.equal(files.has("wrongShape"), false);
+  assert.equal(files.has("brokenEntry"), false);
+  assert.equal(await store.write("tok", "root", { lastUpdatedAt: "3", files: {} }), "good");
+});
+
+test("when every duplicate is malformed the newest is kept and the registry rebuilt", async () => {
+  const { drive, files } = fakeDrive([
+    { id: "old", name: "_sync-meta.json", mimeType: "application/json", modifiedTime: "2026-01-01", content: "{" },
+    { id: "new", name: "_sync-meta.json", mimeType: "application/json", modifiedTime: "2026-02-01", content: "[" },
+    { id: "a", name: "a.md", mimeType: "text/markdown", md5Checksum: "h" },
+  ]);
+  const store = createSyncMetaStore(drive);
+  assert.deepEqual(await store.readWithFile("tok", "root"), { meta: null, fileId: "new" });
+  assert.equal(files.has("old"), false);
+  const rebuilt = await store.readReconciled("tok", "root");
+  assert.equal(rebuilt.fileId, "new");
+  assert.deepEqual(Object.keys(rebuilt.meta!.files), ["a"]);
+});
+
 test("write reuses a known file id and creates the file when missing", async () => {
   const { drive, calls } = fakeDrive([]);
   const store = createSyncMetaStore(drive);

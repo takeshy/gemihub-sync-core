@@ -25,6 +25,14 @@ test("remote change produces toPull", () => {
   assert.equal(diff.conflicts.length, 0);
 });
 
+test("falls back to modifiedTime when either checksum is unavailable", () => {
+  const localMeta = makeMeta("1", "");
+  const remoteMeta = makeMeta("1", "");
+  remoteMeta.files["1"].modifiedTime = "2024-01-02T00:00:00.000Z";
+  assert.deepEqual(computeSyncDiff(localMeta, remoteMeta).toPull, ["1"]);
+  assert.deepEqual(computeSyncDiff(localMeta, remoteMeta, new Set(["1"])).conflicts.map((entry) => entry.fileId), ["1"]);
+});
+
 test("locally modified without local meta produces toPush", () => {
   const localMeta = null;
   const remoteMeta = makeMeta("1", "aaa");

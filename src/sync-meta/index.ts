@@ -25,6 +25,25 @@ function emptySyncMeta(): SyncMeta {
   return { lastUpdatedAt: new Date().toISOString(), files: {} };
 }
 
+/** Parse registry content; null when it is not a usable `_sync-meta.json`. */
+function parseSyncMeta(content: string): SyncMeta | null {
+  try {
+    const value: unknown = JSON.parse(content);
+    if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+    const meta = value as Partial<SyncMeta>;
+    if (typeof meta.lastUpdatedAt !== "string" || !meta.files
+      || typeof meta.files !== "object" || Array.isArray(meta.files)) return null;
+    for (const file of Object.values(meta.files)) {
+      if (!file || typeof file !== "object" || Array.isArray(file)
+        || typeof file.name !== "string" || typeof file.mimeType !== "string"
+        || typeof file.md5Checksum !== "string" || typeof file.modifiedTime !== "string") return null;
+    }
+    return meta as SyncMeta;
+  } catch {
+    return null;
+  }
+}
+
 function isNotFound(error: unknown): boolean {
   const status = (error as { status?: unknown } | null)?.status;
   return status === 404 || (error instanceof Error && /\b404\b/.test(error.message));
@@ -140,15 +159,16 @@ export function createSyncMetaStore(drive: SyncMetaDrive) {
     if (!keep) return { file: null, meta: null };
     if (discard.length === 0) return { file: keep as DriveFile, meta: null };
 
-    const parsed = await Promise.all(matches.map(async (match) => {
-      try {
-        return JSON.parse(await drive.readFile(accessToken, match.id, options)) as SyncMeta;
-      } catch {
-        return null;
-      }
-    }));
-    const valid = parsed.filter((meta): meta is SyncMeta => meta != null);
+    // A read failure (network, 5xx) aborts before anything is modified: that
+    // copy may hold entries absent from the others. A copy that was read but is
+    // not a valid registry holds nothing recoverable, so it is left out of the
+    // merge and removed with the other duplicates — keeping it would fail
+    // every future read.
+    const contents = await Promise.all(matches.map((match) => drive.readFile(accessToken, match.id, options)));
+    const valid = contents.map(parseSyncMeta).filter((meta): meta is SyncMeta => meta != null);
     const merged = valid.length > 0 ? mergeSyncMetaSnapshots(valid) : null;
+    // With no valid copy the newest file is kept as is; callers see a missing
+    // registry and rebuild it from the listing.
     if (merged) await drive.updateFile(accessToken, keep.id, JSON.stringify(merged, null, 2), "application/json", options);
     await Promise.all(discard.map((file) => drive.deleteFile(accessToken, file.id, options).catch((error: unknown) => {
       if (!isNotFound(error)) throw error;
@@ -156,16 +176,14 @@ export function createSyncMetaStore(drive: SyncMetaDrive) {
     return { file: keep as DriveFile, meta: merged };
   }
 
-  /** Current registry and its file id; `meta` is null when missing or unreadable. */
+  /** Current registry and its file id; `meta` is null when missing or malformed. */
   async function readWithFile(accessToken: string, rootFolderId: string, options: DriveOperationOptions = {}): Promise<{ meta: SyncMeta | null; fileId: string | null }> {
     const { file, meta } = await findMetaFile(accessToken, rootFolderId, options);
     if (!file) return { meta: null, fileId: null };
     if (meta) return { meta, fileId: file.id };
-    try {
-      return { meta: JSON.parse(await drive.readFile(accessToken, file.id, options)) as SyncMeta, fileId: file.id };
-    } catch {
-      return { meta: null, fileId: file.id };
-    }
+    // Read errors propagate (never treated as "missing", which would rebuild
+    // over the registry); only a malformed file reads as null.
+    return { meta: parseSyncMeta(await drive.readFile(accessToken, file.id, options)), fileId: file.id };
   }
 
   async function read(accessToken: string, rootFolderId: string, options: DriveOperationOptions = {}): Promise<SyncMeta | null> {
@@ -234,6 +252,9 @@ export function createSyncMetaStore(drive: SyncMetaDrive) {
     for (const id of Object.keys(meta.files).filter((id) => !listed.has(id))) {
       try {
         const file = await drive.getFileMetadata(accessToken, id, options);
+        // Entries whose path is now sync-excluded are left alone (not listed,
+        // so never refreshed or re-adopted). Removing them would make every
+        // client treat the file as deleted remotely while it still exists.
         if (isFileRemovedFromSyncRoot(file, rootFolderId)) result.removedIds.push(id);
       } catch (error) {
         if (isNotFound(error)) result.removedIds.push(id);

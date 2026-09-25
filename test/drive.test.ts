@@ -55,9 +55,47 @@ test("listUserFiles drops folders, system files and Workspace-native files", asy
     { id: "3", name: "_sync-meta.json", mimeType: "application/json" },
     { id: "4", name: "_encrypted-auth.json", mimeType: "application/json" },
     { id: "5", name: "Doc", mimeType: "application/vnd.google-apps.document" },
+    { id: "6", name: "history/a.md", mimeType: "text/markdown" },
+    { id: "7", name: "nested/node_modules/pkg.js", mimeType: "text/javascript" },
   ] } }]);
   const files = await createDriveClient(transport, noSleep).listUserFiles("tok", "root");
   assert.deepEqual(files.map((f) => f.id), ["1"]);
+});
+
+test("does not retry a POST that may already have created a file", async () => {
+  const { transport, requests } = fakeTransport([{ status: 503, body: "unavailable" }]);
+  const drive = createDriveClient(transport, noSleep);
+  await assert.rejects(drive.createFile("tok", "a.md", "content", "root"),
+    (error: unknown) => error instanceof DriveApiError && error.status === 503);
+  assert.equal(requests.length, 1);
+});
+
+test("retries a POST rejected by rate limiting (429 is not processed)", async () => {
+  const { transport, requests } = fakeTransport([
+    { status: 429, headers: { "Retry-After": "1" } },
+    { body: { id: "created", name: "a.md", mimeType: "text/markdown" } },
+  ]);
+  const file = await createDriveClient(transport, noSleep).createFile("tok", "a.md", "content", "root");
+  assert.equal(file.id, "created");
+  assert.equal(requests.length, 2);
+});
+
+test("a retried DELETE that finds nothing counts as done", async () => {
+  const { transport, requests } = fakeTransport([{ status: 503 }, { status: 404, body: "File not found" }]);
+  await createDriveClient(transport, noSleep).deleteFile("tok", "f1");
+  assert.equal(requests.length, 2);
+  const once = fakeTransport([{ status: 404, body: "File not found" }]);
+  await assert.rejects(createDriveClient(once.transport, noSleep).deleteFile("tok", "f1"), /404/);
+});
+
+test("findFilesByExactName follows every page of duplicate names", async () => {
+  const { transport, requests } = fakeTransport([
+    { body: { files: [{ id: "first", name: "_sync-meta.json", mimeType: "application/json" }], nextPageToken: "p2" } },
+    { body: { files: [{ id: "second", name: "_sync-meta.json", mimeType: "application/json" }] } },
+  ]);
+  const files = await createDriveClient(transport, noSleep).findFilesByExactName("tok", "_sync-meta.json", "root");
+  assert.deepEqual(files.map((file) => file.id), ["first", "second"]);
+  assert.equal(new URL(requests[1].url).searchParams.get("pageToken"), "p2");
 });
 
 test("retries 429/500/503 with Retry-After, capped, then throws DriveApiError", async () => {
